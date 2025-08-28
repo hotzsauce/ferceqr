@@ -47,7 +47,7 @@ TRANSACTIONS_INPUT_SCHEMA = {
     "point_of_delivery_specific_location": pl.String,
     "class_name": en.TransactionClassName,
     "term_name": en.TransactionTermName,
-    "increment_name": en.TransactionIncrementName,
+    "increment_name": pl.String, # needs to be canonicalized
     "increment_peaking_name": pl.String, # needs to be canonicalized
     "product_name": pl.String, # needs to be canonicalized
     "transaction_quantity": pl.Float64,
@@ -103,6 +103,7 @@ class TransactionsPreProcessor(EqrPreProcessor):
         to_uppercase = [
             "type_of_rate", "product_name", "rate_units",
             "exchange_brokerage_service",
+            "increment_name",
             "increment_peaking_name",
         ]
         to_shorten = ["time_zone"]
