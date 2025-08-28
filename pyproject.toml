@@ -1,0 +1,13 @@
+[project]
+name = "ferceqr"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "polars>=1.32.3",
+    "requests>=2.32.5",
+    "selenium>=4.35.0",
+    "tqdm>=4.67.1",
+    "webdriver-manager>=4.0.2",
+]
