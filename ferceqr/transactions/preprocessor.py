@@ -107,6 +107,8 @@ class TransactionsPreProcessor(EqrPreProcessor):
             "increment_peaking_name",
         ]
         to_shorten = ["time_zone"]
+        to_datetime = ["transaction_begin_date", "transaction_end_date"]
+        to_date = ["trade_date"]
 
         upper_mods = [
             pl.col(c)
@@ -120,7 +122,19 @@ class TransactionsPreProcessor(EqrPreProcessor):
             .cast(en.TRANSACTION_MAPPINGS[c])
             for c in to_shorten
         ]
-        mods = upper_mods + shorten_mods
+        datetime_mods = [
+            pl.col(c)
+            .cast(pl.String)
+            .str.strptime(pl.Datetime, "%Y%m%d%H%M")
+            for c in to_datetime
+        ]
+        date_mods = [
+            pl.col(c)
+            .cast(pl.String)
+            .str.strptime(pl.Date, "%Y%m%d")
+            for c in to_date
+        ]
+        mods = upper_mods + shorten_mods + datetime_mods + date_mods
 
         return (
             df
