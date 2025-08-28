@@ -155,7 +155,7 @@ class EqrPreProcessor(object):
         self.chunk_count = 0 # reset in case read is called more than once
 
         with zipfile.ZipFile(self.in_zip) as zf:
-            names = zf.namelist()[:1_000]
+            names = zf.namelist()
             for inner in names:
                 try:
                     rbytes = self.unzip_by_rtype(zf, inner)
@@ -172,7 +172,8 @@ class EqrPreProcessor(object):
 
                 if row_count >= self.chunk_size:
                     chunk = pl.concat(chunk_frames, how="vertical")
-                    self.write_chunk(chunk
+                    self.write_chunk(chunk)
+
                     chunk_frames.clear()
                     row_count = 0
 
