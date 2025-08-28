@@ -163,19 +163,19 @@ class EqrPreProcessor(object):
                     continue
 
                 raw_df = self.read_rtype_bytes(rbytes, inner).filter(predicate)
-                df = self.align_schema(raw_df)
-                n_rows = df.shape[0]
+                n_rows = raw_df.shape[0]
 
                 if n_rows > 0:
+                    df = self.align_schema(raw_df)
                     chunk_frames.append(df)
                     row_count += n_rows
 
-                if row_count >= self.chunk_size:
-                    chunk = pl.concat(chunk_frames, how="vertical")
-                    self.write_chunk(chunk)
+                    if row_count >= self.chunk_size:
+                        chunk = pl.concat(chunk_frames, how="vertical")
+                        self.write_chunk(chunk)
 
-                    chunk_frames.clear()
-                    row_count = 0
+                        chunk_frames.clear()
+                        row_count = 0
 
         if chunk_frames:
             chunk = pl.concat(chunk_frames, how="vertical")
