@@ -87,8 +87,8 @@ class EqrPreProcessor(object):
         Creates ``out_dir`` if it does not already exist and resets
         ``chunk_count`` to zero.
         """
-        self.in_zip = pathlib.Path(str(in_zip)).resolve()
-        self.out_dir = pathlib.Path(str(out_dir)).resolve()
+        self.in_zip = pathlib.Path(str(in_zip)).expanduser().resolve()
+        self.out_dir = pathlib.Path(str(out_dir)).expanduser().resolve()
         self.out_dir.mkdir(parents=True, exist_ok=True)
 
         self.chunk_size = chunk_size
