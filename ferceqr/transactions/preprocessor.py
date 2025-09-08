@@ -17,6 +17,10 @@ Notes
 from __future__ import annotations
 
 import io
+from ferceqr.etl.errors import (
+    MissingEocdError,
+    MissingRecordTypeError,
+)
 from ferceqr.etl.preprocessor import EqrPreProcessor
 import ferceqr.transactions.enums as en
 from functools import reduce
@@ -45,8 +49,8 @@ TRANSACTIONS_INPUT_SCHEMA = {
     "time_zone": pl.String, # needs to be canonicalized
     "point_of_delivery_balancing_authority": pl.String,
     "point_of_delivery_specific_location": pl.String,
-    "class_name": en.TransactionClassName,
-    "term_name": en.TransactionTermName,
+    "class_name": pl.String, # needs to be canonicalized
+    "term_name": pl.String, # needs to be canonicalized
     "increment_name": pl.String, # needs to be canonicalized
     "increment_peaking_name": pl.String, # needs to be canonicalized
     "product_name": pl.String, # needs to be canonicalized
@@ -74,6 +78,43 @@ class TransactionsPreProcessor(EqrPreProcessor):
     columns, and implements :meth:`unzip_by_rtype` to extract the inner
     ``*_transactions.csv`` bytes from a seller ZIP.
     """
+
+    def __init__(
+        self,
+        in_zip: str | pathlib.Path,
+        out_dir: str | pathlib.Path,
+        chunk_size: int = 1_000_000,
+        log_name: str = "",
+        strict: bool = True,
+    ):
+        """
+        Initialize the Transactions processor.
+
+        Parameters
+        ----------
+        in_zip : str or pathlib.Path
+            Path to the outer ZIP file containing inner archives/CSVs.
+        out_dir : str or pathlib.Path
+            Directory where chunked Parquet files will be written.
+        chunk_size : int, default 1_000_000
+            Maximum number of rows per output chunk.
+        log_name : str, default ""
+            The name of the logging file. Defaults to
+            'eqr_transactions_[timestamp].log"
+        strict : bool, default True
+            If `True`, throw an error and immediately terminate the processing.
+            If `False`, log the error message and continue with the processing.
+
+        Notes
+        -----
+        Creates ``out_dir`` if it does not already exist and resets
+        ``chunk_count`` to zero.
+        """
+        if not log_name:
+            import datetime
+            now = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+            log_name = f"eqr_transactions_{now}.log"
+        super().__init__(in_zip, out_dir, chunk_size, log_name, strict)
 
     def align_schema(self, df: pl.DataFrame) -> pl.DataFrame:
         """
@@ -103,6 +144,8 @@ class TransactionsPreProcessor(EqrPreProcessor):
         to_uppercase = [
             "type_of_rate", "product_name", "rate_units",
             "exchange_brokerage_service",
+            "class_name",
+            "term_name",
             "increment_name",
             "increment_peaking_name",
         ]
@@ -192,15 +235,39 @@ class TransactionsPreProcessor(EqrPreProcessor):
         bytes
             Raw bytes of the inner transactions CSV.
 
-        Raises
+        Raises (in the order specified below)
         ------
         FileNotFoundError
-            If the inner archive contains no transactions CSV.
+            If the inner file is a simple directory rather than a zip
+        BadZipFile
+            If the actual size of the inner zip file does not match the
+            outer zip's information listing its # of bytes
+        MissingEocdError
+            If the inner zip file is corrupted and missing its EOCD
+        MissingRecordTypeError
+            If the outer zip file does not have a transactions record
         RuntimeError
             If multiple transactions CSVs are found in the inner archive.
         """
         inner_bytes = outer.read(inner_name)
         inner_buffer = io.BytesIO(inner_bytes)
+
+        zi = outer.getinfo(inner_name)
+        if zi.is_dir():
+            raise FileNotFoundError(
+                f"'{inner_name}' is a directory, not a ZIP file"
+            )
+
+        if len(inner_bytes) != zi.file_size:
+            raise zipfile.BadZipFile(
+                f"Truncated inner ZIP for '{inner_name}': "
+                f"expected {zi.file_size} bytes, got {len(inner_bytes)} bytes"
+            )
+
+        # EOCD presence check in last 66 KiB (ZIP spec)
+        tail = inner_bytes[-66560:] if len(inner_bytes) >= 66560 else inner_bytes
+        if b"PK\x05\x06" not in tail:
+            raise MissingEocdError(inner_name)
 
         with zipfile.ZipFile(inner_buffer) as inner:
             tfile = list(filter(
@@ -209,9 +276,7 @@ class TransactionsPreProcessor(EqrPreProcessor):
             ))
 
             if len(tfile) == 0:
-                raise FileNotFoundError(
-                    f"No transactions file found in '{inner_name}'"
-                )
+                raise MissingRecordTypeError("transactions", inner_name)
 
             if len(tfile) > 1:
                 raise RuntimeError(

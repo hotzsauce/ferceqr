@@ -22,8 +22,13 @@ Notes
 """
 from __future__ import annotations
 
+from ferceqr.etl.errors import (
+    MissingEocdError,
+    MissingRecordTypeError,
+)
 from ferceqr.utils.polars import filters_to_predicate
 import io
+import logging
 import pathlib
 import polars as pl
 import zipfile
@@ -50,7 +55,7 @@ class EqrPreProcessor(object):
     out_dir : str or pathlib.Path
         Directory where chunked Parquet files will be written.
     chunk_size : int, default 1_000_000
-        Maximum number of rows per output chunk.
+        Minimum number of rows per output chunk.
 
     Attributes
     ----------
@@ -60,8 +65,11 @@ class EqrPreProcessor(object):
         Resolved output directory; created if missing.
     chunk_size : int
         Maximum rows per chunk.
-    chunk_count : int
-        Counter used to number output chunks.
+    log_name : str, default ""
+        The name of the logging file. Defaults to 'eqr_preprocessor_[timestamp].log"
+    strict : bool, default True
+        If `True`, throw an error and immediately terminate the processing.
+        If `False`, log the error message and continue with the processing.
     """
 
     def __init__(
@@ -69,6 +77,8 @@ class EqrPreProcessor(object):
         in_zip: str | pathlib.Path,
         out_dir: str | pathlib.Path,
         chunk_size: int = 1_000_000,
+        log_name: str = "",
+        strict: bool = True,
     ):
         """
         Initialize the processor.
@@ -81,6 +91,12 @@ class EqrPreProcessor(object):
             Directory where chunked Parquet files will be written.
         chunk_size : int, default 1_000_000
             Maximum number of rows per output chunk.
+        log_name : str, default ""
+            The name of the logging file. Defaults to
+            'eqr_preprocessor_[timestamp].log"
+        strict : bool, default True
+            If `True`, throw an error and immediately terminate the processing.
+            If `False`, log the error message and continue with the processing.
 
         Notes
         -----
@@ -93,6 +109,13 @@ class EqrPreProcessor(object):
 
         self.chunk_size = chunk_size
         self.chunk_count = 0 # used to number chunks in out_dir
+
+        # assign a `self.logger` tracker, and its first handler to
+        # `self.logger_handler`
+        self.log_name = log_name
+        self._init_logger(log_name)
+
+        self.strict = strict
 
     def align_schema(self, df: pl.DataFrame, *args, **kwargs) -> pl.DataFrame:
         """
@@ -149,6 +172,13 @@ class EqrPreProcessor(object):
         This method resets ``chunk_count`` at the start and again after completion.
         """
         predicate = filters_to_predicate(filters) if filters else pl.lit(True)
+        if filters:
+            self.logger_handler.stream.write(
+                "\n=== Filters ===\n" +
+                "\n".join(f"    {k}: {v}" for k, v in filters.items()) +
+                "\n\n"
+            )
+            self.logger_handler.stream.flush()
 
         chunk_frames = []
         row_count = 0
@@ -159,8 +189,20 @@ class EqrPreProcessor(object):
             for inner in names:
                 try:
                     rbytes = self.unzip_by_rtype(zf, inner)
-                except FileNotFoundError:
-                    continue
+                except (
+                    FileNotFoundError,
+                    MissingEocdError,
+                    MissingRecordTypeError,
+                    RuntimeError,
+                    zipfile.BadZipFile,
+                ) as exc:
+                    # all these error messages include the inner filename
+                    self.logger.error(f"Error while processing: {exc}")
+                except Exception as exc:
+                    if self.strict:
+                        raise exc
+                    else:
+                        self.logger.error(f"{exc}")
 
                 raw_df = self.read_rtype_bytes(rbytes, inner).filter(predicate)
                 n_rows = raw_df.shape[0]
@@ -308,3 +350,40 @@ class EqrPreProcessor(object):
         out_path = self.out_dir / f"chunk_{chunk_str}.parquet"
         df.write_parquet(out_path)
         self.chunk_count += 1
+
+    def _init_logger(self, log_id: str):
+        if not log_id:
+            import datetime
+            now = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+            log_id = f"eqr_preprocessing_{now}.log"
+
+        self.logger = logging.getLogger(log_id)
+        self.logger.setLevel(logging.INFO)
+        self.logger.propagate = False # don't send to root
+
+        # avoid duplicating handlers if this gets called twice
+        if not (
+            any(
+                isinstance(h, logging.FileHandler)
+                and getattr(h, "baseFilename", None) == str(log_id)
+                for h in self.logger.handlers
+            )
+        ):
+            fh = logging.FileHandler(log_id, mode="a", encoding="utf-8")
+            fh.setLevel(logging.INFO)
+            fh.setFormatter(logging.Formatter(
+                "%(asctime)s %(levelname)s: %(message)s"
+            ))
+
+            self.logger.addHandler(fh)
+            self.logger_handler = fh
+        else:
+            self.logger_handler = self.logger.handlers[0]
+
+        # write an informative header that doesn't have to abide by the
+        # format set above
+        self.logger_handler.stream.write(
+            f"Source: {self.in_zip}\n"
+            f"Target: {self.out_dir}\n"
+        )
+        self.logger_handler.stream.flush()
