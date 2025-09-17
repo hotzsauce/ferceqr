@@ -198,6 +198,7 @@ class EqrPreProcessor(object):
                 ) as exc:
                     # all these error messages include the inner filename
                     self.logger.error(f"Error while processing: {exc}")
+                    continue
                 except Exception as exc:
                     if self.strict:
                         raise exc
@@ -357,7 +358,7 @@ class EqrPreProcessor(object):
             now = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
             log_id = f"eqr_preprocessing_{now}.log"
 
-        self.logger = logging.getLogger(log_id)
+        self.logger = logging.getLogger(str(log_id)) # logger name *must* be str
         self.logger.setLevel(logging.INFO)
         self.logger.propagate = False # don't send to root
 
