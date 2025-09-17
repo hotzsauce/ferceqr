@@ -42,3 +42,7 @@ import numpy as np
 import pandas as pd
 ...
 ```
+
+# Usage
+
+See the `example.py` script to see an example of how to use the module.
