@@ -25,6 +25,6 @@ class ReportViewer(object):
         """
         Download a CSV or XML from the ERC EQR page
         """
-        target_dir = kwrgs.pop("target_dir", "")
+        target_dir = kwargs.pop("target_dir", "")
         filing = FercEqrFilings(self.config, target_dir)
         filing.download(*args, **kwargs)
